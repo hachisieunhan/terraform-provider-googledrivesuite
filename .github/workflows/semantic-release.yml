@@ -1,0 +1,110 @@
+name: Semantic Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Determine version and tag
+    runs-on: ubuntu-latest
+    # Skip if the commit was created by this workflow (avoid infinite loops).
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latest_tag
+        run: |
+          tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $tag"
+
+      - name: Determine next version
+        id: next_version
+        run: |
+          latest="${{ steps.latest_tag.outputs.tag }}"
+          # Strip leading 'v'
+          version="${latest#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+
+          # Analyze commits since the last tag.
+          if [ "$latest" = "v0.0.0" ]; then
+            commits=$(git log --pretty=format:"%s" HEAD)
+          else
+            commits=$(git log --pretty=format:"%s" "${latest}..HEAD")
+          fi
+
+          if [ -z "$commits" ]; then
+            echo "No new commits since $latest. Skipping release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          bump="none"
+
+          while IFS= read -r msg; do
+            # BREAKING CHANGE or '!' after type -> major bump
+            if echo "$msg" | grep -qiE "^[a-z]+(\(.+\))?!:" || echo "$msg" | grep -qi "BREAKING CHANGE"; then
+              bump="major"
+              break
+            fi
+
+            # feat: -> minor bump (unless already major)
+            if echo "$msg" | grep -qiE "^feat(\(.+\))?:"; then
+              if [ "$bump" != "major" ]; then
+                bump="minor"
+              fi
+            fi
+
+            # fix:, perf:, refactor: -> patch bump (unless already minor or major)
+            if echo "$msg" | grep -qiE "^(fix|perf|refactor)(\(.+\))?:"; then
+              if [ "$bump" = "none" ]; then
+                bump="patch"
+              fi
+            fi
+          done <<< "$commits"
+
+          if [ "$bump" = "none" ]; then
+            echo "No version-bumping commits (feat, fix, perf, refactor, breaking). Skipping release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$bump" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          next="v${major}.${minor}.${patch}"
+          echo "Bump type: $bump"
+          echo "Next version: $next"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.next_version.outputs.skip != 'true'
+        run: |
+          version="${{ steps.next_version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$version" -m "Release $version"
+          git push origin "$version"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
