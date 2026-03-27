@@ -86,7 +86,7 @@ func resolveCredentials(credentials types.String) (string, error) {
 
 // newClients initializes Google API clients from the given credentials JSON string.
 func newClients(ctx context.Context, credentialsJSON string) (*GoogleDriveSuiteClients, error) {
-	credOption := option.WithCredentialsJSON([]byte(credentialsJSON))
+	credOption := option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON))
 
 	sheetsService, err := sheets.NewService(ctx, credOption)
 	if err != nil {
