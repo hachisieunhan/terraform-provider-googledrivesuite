@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"errors"
+	"net/http"
+
 	"cloud.google.com/go/storage"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -12,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 )
@@ -108,4 +112,14 @@ func newClients(ctx context.Context, credentialsJSON string) (*GoogleDriveSuiteC
 		DriveService:  driveService,
 		StorageClient: storageClient,
 	}, nil
+}
+
+// isNotFound returns true if the error represents an HTTP 404 Not Found
+// response from a Google API call.
+func isNotFound(err error) bool {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == http.StatusNotFound
+	}
+	return false
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -15,6 +17,7 @@ import (
 )
 
 var _ resource.Resource = &SpreadsheetBackupResource{}
+var _ resource.ResourceWithImportState = &SpreadsheetBackupResource{}
 
 // SpreadsheetBackupResource defines the resource implementation.
 type SpreadsheetBackupResource struct{}
@@ -275,6 +278,28 @@ func (r *SpreadsheetBackupResource) Delete(ctx context.Context, req resource.Del
 		)
 		return
 	}
+}
+
+func (r *SpreadsheetBackupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import ID format: spreadsheet_id|bucket|object_path
+	// Using '|' as delimiter because '/' appears in object_path.
+	parts := strings.SplitN(req.ID, "|", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			"Expected import ID format: spreadsheet_id|bucket|object_path. Got: "+req.ID,
+		)
+		return
+	}
+
+	spreadsheetID := parts[0]
+	bucket := parts[1]
+	objectPath := parts[2]
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), fmt.Sprintf("%s/%s", bucket, objectPath))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("spreadsheet_id"), spreadsheetID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("bucket"), bucket)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("object_path"), objectPath)...)
 }
 
 // exportAndUpload exports a spreadsheet from Google Drive and uploads it to GCS.
