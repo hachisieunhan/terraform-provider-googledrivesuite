@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"cloud.google.com/go/storage"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -29,8 +30,10 @@ type GoogleDriveSuiteProviderModel struct {
 
 // GoogleDriveSuiteClients holds the initialized API clients shared with resources.
 type GoogleDriveSuiteClients struct {
-	SheetsService *sheets.Service
-	DriveService  *drive.Service
+	SheetsService   *sheets.Service
+	DriveService    *drive.Service
+	StorageClient   *storage.Client
+	CredentialsJSON string
 }
 
 func New(version string) func() provider.Provider {
@@ -83,8 +86,10 @@ func (p *GoogleDriveSuiteProvider) Configure(ctx context.Context, req provider.C
 		return
 	}
 
+	credOption := option.WithCredentialsJSON([]byte(credentialsJSON))
+
 	// Initialize Google Sheets service.
-	sheetsService, err := sheets.NewService(ctx, option.WithCredentialsJSON([]byte(credentialsJSON)))
+	sheetsService, err := sheets.NewService(ctx, credOption)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Google Sheets Client",
@@ -94,7 +99,7 @@ func (p *GoogleDriveSuiteProvider) Configure(ctx context.Context, req provider.C
 	}
 
 	// Initialize Google Drive service.
-	driveService, err := drive.NewService(ctx, option.WithCredentialsJSON([]byte(credentialsJSON)))
+	driveService, err := drive.NewService(ctx, credOption)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Google Drive Client",
@@ -103,9 +108,21 @@ func (p *GoogleDriveSuiteProvider) Configure(ctx context.Context, req provider.C
 		return
 	}
 
+	// Initialize Google Cloud Storage client.
+	storageClient, err := storage.NewClient(ctx, credOption)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create Google Cloud Storage Client",
+			"An error occurred when creating the Google Cloud Storage client: "+err.Error(),
+		)
+		return
+	}
+
 	clients := &GoogleDriveSuiteClients{
-		SheetsService: sheetsService,
-		DriveService:  driveService,
+		SheetsService:   sheetsService,
+		DriveService:    driveService,
+		StorageClient:   storageClient,
+		CredentialsJSON: credentialsJSON,
 	}
 
 	resp.DataSourceData = clients
@@ -115,6 +132,9 @@ func (p *GoogleDriveSuiteProvider) Configure(ctx context.Context, req provider.C
 func (p *GoogleDriveSuiteProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewPermissionResource,
+		NewSpreadsheetResource,
+		NewSheetResource,
+		NewSpreadsheetBackupResource,
 	}
 }
 
