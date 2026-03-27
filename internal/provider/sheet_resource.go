@@ -197,6 +197,11 @@ func (r *SheetResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		Fields("sheets(properties)").
 		Context(ctx).Do()
 	if err != nil {
+		if isNotFound(err) {
+			// Parent spreadsheet was deleted outside of Terraform.
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Reading Sheet",
 			"Could not read spreadsheet "+data.SpreadsheetID.ValueString()+": "+err.Error(),

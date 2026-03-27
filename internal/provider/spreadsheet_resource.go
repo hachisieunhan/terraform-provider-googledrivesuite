@@ -153,6 +153,11 @@ func (r *SpreadsheetResource) Read(ctx context.Context, req resource.ReadRequest
 		Fields("spreadsheetId,properties(title,locale,timeZone),spreadsheetUrl").
 		Context(ctx).Do()
 	if err != nil {
+		if isNotFound(err) {
+			// Spreadsheet was deleted outside of Terraform.
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Reading Spreadsheet",
 			"Could not read spreadsheet ID "+data.ID.ValueString()+": "+err.Error(),
@@ -187,30 +192,23 @@ func (r *SpreadsheetResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	// Build the update requests for changed properties.
-	var requests []*sheets.Request
-
 	// Update title, locale, and time zone via a single UpdateSpreadsheetProperties request.
+	// All three fields are always included in the field mask because locale and time_zone
+	// are Optional+Computed: once set on Create, they always have values in state.
 	properties := &sheets.SpreadsheetProperties{
-		Title: data.Title.ValueString(),
-	}
-	fields := "title"
-
-	if !data.Locale.IsNull() && !data.Locale.IsUnknown() {
-		properties.Locale = data.Locale.ValueString()
-		fields += ",locale"
-	}
-	if !data.TimeZone.IsNull() && !data.TimeZone.IsUnknown() {
-		properties.TimeZone = data.TimeZone.ValueString()
-		fields += ",timeZone"
+		Title:    data.Title.ValueString(),
+		Locale:   data.Locale.ValueString(),
+		TimeZone: data.TimeZone.ValueString(),
 	}
 
-	requests = append(requests, &sheets.Request{
-		UpdateSpreadsheetProperties: &sheets.UpdateSpreadsheetPropertiesRequest{
-			Properties: properties,
-			Fields:     fields,
+	requests := []*sheets.Request{
+		{
+			UpdateSpreadsheetProperties: &sheets.UpdateSpreadsheetPropertiesRequest{
+				Properties: properties,
+				Fields:     "title,locale,timeZone",
+			},
 		},
-	})
+	}
 
 	_, err = clients.SheetsService.Spreadsheets.BatchUpdate(data.ID.ValueString(), &sheets.BatchUpdateSpreadsheetRequest{
 		Requests: requests,

@@ -174,6 +174,11 @@ func (r *PermissionResource) Read(ctx context.Context, req resource.ReadRequest,
 		data.ID.ValueString(),
 	).Fields("id,role,type,emailAddress,domain").Context(ctx).Do()
 	if err != nil {
+		if isNotFound(err) {
+			// Permission or file was deleted outside of Terraform.
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Reading Permission",
 			"Could not read permission ID "+data.ID.ValueString()+": "+err.Error(),
