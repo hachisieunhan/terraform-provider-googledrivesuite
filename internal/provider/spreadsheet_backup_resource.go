@@ -17,13 +17,12 @@ import (
 var _ resource.Resource = &SpreadsheetBackupResource{}
 
 // SpreadsheetBackupResource defines the resource implementation.
-type SpreadsheetBackupResource struct {
-	client *GoogleDriveSuiteClients
-}
+type SpreadsheetBackupResource struct{}
 
 // SpreadsheetBackupResourceModel describes the resource data model.
 type SpreadsheetBackupResourceModel struct {
 	ID            types.String `tfsdk:"id"`
+	Credentials   types.String `tfsdk:"credentials"`
 	SpreadsheetID types.String `tfsdk:"spreadsheet_id"`
 	Bucket        types.String `tfsdk:"bucket"`
 	ObjectPath    types.String `tfsdk:"object_path"`
@@ -63,6 +62,11 @@ func (r *SpreadsheetBackupResource) Schema(_ context.Context, _ resource.SchemaR
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"credentials": schema.StringAttribute{
+				Description: "Service account JSON credentials. Can also be set via the GOOGLE_APPLICATION_CREDENTIALS environment variable.",
+				Optional:    true,
+				Sensitive:   true,
+			},
 			"spreadsheet_id": schema.StringAttribute{
 				Description: "The ID of the Google Spreadsheet to back up.",
 				Required:    true,
@@ -92,27 +96,26 @@ func (r *SpreadsheetBackupResource) Schema(_ context.Context, _ resource.SchemaR
 	}
 }
 
-func (r *SpreadsheetBackupResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	clients, ok := req.ProviderData.(*GoogleDriveSuiteClients)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *GoogleDriveSuiteClients, got: %T.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = clients
+func (r *SpreadsheetBackupResource) Configure(_ context.Context, _ resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	// Credentials are configured at the resource level, so no provider data is needed.
 }
 
 func (r *SpreadsheetBackupResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data SpreadsheetBackupResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
 		return
 	}
 
@@ -133,7 +136,7 @@ func (r *SpreadsheetBackupResource) Create(ctx context.Context, req resource.Cre
 
 	// Perform the export and upload.
 	objectPath := data.ObjectPath.ValueString()
-	err := r.exportAndUpload(ctx, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
+	err = exportAndUpload(ctx, clients, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Backup",
@@ -157,11 +160,23 @@ func (r *SpreadsheetBackupResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
 	// Verify the GCS object still exists.
 	bucket := data.Bucket.ValueString()
 	objectPath := data.ObjectPath.ValueString()
 
-	attrs, err := r.client.StorageClient.Bucket(bucket).Object(objectPath).Attrs(ctx)
+	attrs, err := clients.StorageClient.Bucket(bucket).Object(objectPath).Attrs(ctx)
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			// Object was deleted outside of Terraform.
@@ -188,6 +203,18 @@ func (r *SpreadsheetBackupResource) Update(ctx context.Context, req resource.Upd
 		return
 	}
 
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
 	exportFormat := "xlsx"
 	if !data.ExportFormat.IsNull() && !data.ExportFormat.IsUnknown() {
 		exportFormat = data.ExportFormat.ValueString()
@@ -203,7 +230,7 @@ func (r *SpreadsheetBackupResource) Update(ctx context.Context, req resource.Upd
 	}
 
 	objectPath := data.ObjectPath.ValueString()
-	err := r.exportAndUpload(ctx, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
+	err = exportAndUpload(ctx, clients, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Backup",
@@ -227,8 +254,20 @@ func (r *SpreadsheetBackupResource) Delete(ctx context.Context, req resource.Del
 		return
 	}
 
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
 	// Delete the GCS object.
-	err := r.client.StorageClient.Bucket(data.Bucket.ValueString()).Object(data.ObjectPath.ValueString()).Delete(ctx)
+	err = clients.StorageClient.Bucket(data.Bucket.ValueString()).Object(data.ObjectPath.ValueString()).Delete(ctx)
 	if err != nil && err != storage.ErrObjectNotExist {
 		resp.Diagnostics.AddError(
 			"Error Deleting Backup Object",
@@ -239,16 +278,16 @@ func (r *SpreadsheetBackupResource) Delete(ctx context.Context, req resource.Del
 }
 
 // exportAndUpload exports a spreadsheet from Google Drive and uploads it to GCS.
-func (r *SpreadsheetBackupResource) exportAndUpload(ctx context.Context, spreadsheetID, bucket, objectPath, mimeType string) error {
+func exportAndUpload(ctx context.Context, clients *GoogleDriveSuiteClients, spreadsheetID, bucket, objectPath, mimeType string) error {
 	// Export the spreadsheet using the Drive API.
-	exportResp, err := r.client.DriveService.Files.Export(spreadsheetID, mimeType).Context(ctx).Download()
+	exportResp, err := clients.DriveService.Files.Export(spreadsheetID, mimeType).Context(ctx).Download()
 	if err != nil {
 		return fmt.Errorf("failed to export spreadsheet %s: %w", spreadsheetID, err)
 	}
 	defer exportResp.Body.Close()
 
 	// Upload to GCS.
-	writer := r.client.StorageClient.Bucket(bucket).Object(objectPath).NewWriter(ctx)
+	writer := clients.StorageClient.Bucket(bucket).Object(objectPath).NewWriter(ctx)
 	writer.ContentType = mimeType
 
 	if _, err := io.Copy(writer, exportResp.Body); err != nil {

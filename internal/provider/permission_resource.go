@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -18,13 +17,12 @@ var _ resource.Resource = &PermissionResource{}
 var _ resource.ResourceWithImportState = &PermissionResource{}
 
 // PermissionResource defines the resource implementation.
-type PermissionResource struct {
-	client *GoogleDriveSuiteClients
-}
+type PermissionResource struct{}
 
 // PermissionResourceModel describes the resource data model.
 type PermissionResourceModel struct {
 	ID               types.String `tfsdk:"id"`
+	Credentials      types.String `tfsdk:"credentials"`
 	FileID           types.String `tfsdk:"file_id"`
 	Role             types.String `tfsdk:"role"`
 	Type             types.String `tfsdk:"type"`
@@ -51,6 +49,11 @@ func (r *PermissionResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"credentials": schema.StringAttribute{
+				Description: "Service account JSON credentials. Can also be set via the GOOGLE_APPLICATION_CREDENTIALS environment variable.",
+				Optional:    true,
+				Sensitive:   true,
 			},
 			"file_id": schema.StringAttribute{
 				Description: "The ID of the file or spreadsheet.",
@@ -92,27 +95,26 @@ func (r *PermissionResource) Schema(_ context.Context, _ resource.SchemaRequest,
 	}
 }
 
-func (r *PermissionResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	clients, ok := req.ProviderData.(*GoogleDriveSuiteClients)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *GoogleDriveSuiteClients, got: %T.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = clients
+func (r *PermissionResource) Configure(_ context.Context, _ resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	// Credentials are configured at the resource level, so no provider data is needed.
 }
 
 func (r *PermissionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data PermissionResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
 		return
 	}
 
@@ -128,7 +130,7 @@ func (r *PermissionResource) Create(ctx context.Context, req resource.CreateRequ
 		permission.Domain = data.Domain.ValueString()
 	}
 
-	createCall := r.client.DriveService.Permissions.Create(data.FileID.ValueString(), permission)
+	createCall := clients.DriveService.Permissions.Create(data.FileID.ValueString(), permission)
 
 	if !data.SendNotification.IsNull() && !data.SendNotification.IsUnknown() {
 		createCall.SendNotificationEmail(data.SendNotification.ValueBool())
@@ -155,7 +157,19 @@ func (r *PermissionResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	permission, err := r.client.DriveService.Permissions.Get(
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
+	permission, err := clients.DriveService.Permissions.Get(
 		data.FileID.ValueString(),
 		data.ID.ValueString(),
 	).Fields("id,role,type,emailAddress,domain").Context(ctx).Do()
@@ -187,11 +201,23 @@ func (r *PermissionResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
 	permission := &drive.Permission{
 		Role: data.Role.ValueString(),
 	}
 
-	_, err := r.client.DriveService.Permissions.Update(
+	_, err = clients.DriveService.Permissions.Update(
 		data.FileID.ValueString(),
 		data.ID.ValueString(),
 		permission,
@@ -214,7 +240,19 @@ func (r *PermissionResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
-	err := r.client.DriveService.Permissions.Delete(
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
+	err = clients.DriveService.Permissions.Delete(
 		data.FileID.ValueString(),
 		data.ID.ValueString(),
 	).Context(ctx).Do()

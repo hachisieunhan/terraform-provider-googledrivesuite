@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -17,13 +16,12 @@ var _ resource.Resource = &SpreadsheetResource{}
 var _ resource.ResourceWithImportState = &SpreadsheetResource{}
 
 // SpreadsheetResource defines the resource implementation.
-type SpreadsheetResource struct {
-	client *GoogleDriveSuiteClients
-}
+type SpreadsheetResource struct{}
 
 // SpreadsheetResourceModel describes the resource data model.
 type SpreadsheetResourceModel struct {
 	ID             types.String `tfsdk:"id"`
+	Credentials    types.String `tfsdk:"credentials"`
 	Title          types.String `tfsdk:"title"`
 	Locale         types.String `tfsdk:"locale"`
 	TimeZone       types.String `tfsdk:"time_zone"`
@@ -49,6 +47,11 @@ func (r *SpreadsheetResource) Schema(_ context.Context, _ resource.SchemaRequest
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"credentials": schema.StringAttribute{
+				Description: "Service account JSON credentials. Can also be set via the GOOGLE_APPLICATION_CREDENTIALS environment variable.",
+				Optional:    true,
+				Sensitive:   true,
+			},
 			"title": schema.StringAttribute{
 				Description: "The title of the spreadsheet.",
 				Required:    true,
@@ -71,27 +74,26 @@ func (r *SpreadsheetResource) Schema(_ context.Context, _ resource.SchemaRequest
 	}
 }
 
-func (r *SpreadsheetResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	clients, ok := req.ProviderData.(*GoogleDriveSuiteClients)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *GoogleDriveSuiteClients, got: %T.", req.ProviderData),
-		)
-		return
-	}
-
-	r.client = clients
+func (r *SpreadsheetResource) Configure(_ context.Context, _ resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	// Credentials are configured at the resource level, so no provider data is needed.
 }
 
 func (r *SpreadsheetResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data SpreadsheetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
 		return
 	}
 
@@ -110,7 +112,7 @@ func (r *SpreadsheetResource) Create(ctx context.Context, req resource.CreateReq
 		Properties: properties,
 	}
 
-	result, err := r.client.SheetsService.Spreadsheets.Create(spreadsheet).Context(ctx).Do()
+	result, err := clients.SheetsService.Spreadsheets.Create(spreadsheet).Context(ctx).Do()
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Spreadsheet",
@@ -135,7 +137,19 @@ func (r *SpreadsheetResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	result, err := r.client.SheetsService.Spreadsheets.Get(data.ID.ValueString()).
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
+	result, err := clients.SheetsService.Spreadsheets.Get(data.ID.ValueString()).
 		Fields("spreadsheetId,properties(title,locale,timeZone),spreadsheetUrl").
 		Context(ctx).Do()
 	if err != nil {
@@ -158,6 +172,18 @@ func (r *SpreadsheetResource) Update(ctx context.Context, req resource.UpdateReq
 	var data SpreadsheetResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
 		return
 	}
 
@@ -186,7 +212,7 @@ func (r *SpreadsheetResource) Update(ctx context.Context, req resource.UpdateReq
 		},
 	})
 
-	_, err := r.client.SheetsService.Spreadsheets.BatchUpdate(data.ID.ValueString(), &sheets.BatchUpdateSpreadsheetRequest{
+	_, err = clients.SheetsService.Spreadsheets.BatchUpdate(data.ID.ValueString(), &sheets.BatchUpdateSpreadsheetRequest{
 		Requests: requests,
 	}).Context(ctx).Do()
 	if err != nil {
@@ -198,7 +224,7 @@ func (r *SpreadsheetResource) Update(ctx context.Context, req resource.UpdateReq
 	}
 
 	// Re-read to get the latest state after update.
-	result, err := r.client.SheetsService.Spreadsheets.Get(data.ID.ValueString()).
+	result, err := clients.SheetsService.Spreadsheets.Get(data.ID.ValueString()).
 		Fields("spreadsheetId,properties(title,locale,timeZone),spreadsheetUrl").
 		Context(ctx).Do()
 	if err != nil {
@@ -224,8 +250,20 @@ func (r *SpreadsheetResource) Delete(ctx context.Context, req resource.DeleteReq
 		return
 	}
 
+	credentialsJSON, err := resolveCredentials(data.Credentials)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Google Credentials", err.Error())
+		return
+	}
+
+	clients, err := newClients(ctx, credentialsJSON)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create API Clients", err.Error())
+		return
+	}
+
 	// The Sheets API does not support deletion. Use the Drive API to delete the file.
-	err := r.client.DriveService.Files.Delete(data.ID.ValueString()).Context(ctx).Do()
+	err = clients.DriveService.Files.Delete(data.ID.ValueString()).Context(ctx).Do()
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Deleting Spreadsheet",

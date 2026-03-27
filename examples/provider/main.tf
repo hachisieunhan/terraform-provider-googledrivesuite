@@ -7,27 +7,29 @@ terraform {
   }
 }
 
-provider "googledrivesuite" {
-  # Option 1: Inline credentials (not recommended for production)
-  # credentials = file("service-account.json")
+provider "googledrivesuite" {}
 
-  # Option 2: Set the GOOGLE_APPLICATION_CREDENTIALS environment variable
-  # export GOOGLE_APPLICATION_CREDENTIALS='{"type":"service_account",...}'
+# Store credentials in a local variable for reuse across resources.
+# Can also be set via the GOOGLE_APPLICATION_CREDENTIALS environment variable.
+locals {
+  credentials = file("service-account.json")
 }
 
 # -------------------------------------------------------------------
 # 1. Create a Google Spreadsheet
 # -------------------------------------------------------------------
 resource "googledrivesuite_spreadsheet" "example" {
-  title     = "Quarterly Report"
-  locale    = "en_US"
-  time_zone = "America/New_York"
+  credentials = local.credentials
+  title       = "Quarterly Report"
+  locale      = "en_US"
+  time_zone   = "America/New_York"
 }
 
 # -------------------------------------------------------------------
 # 2. Add additional sheets (tabs) to the spreadsheet
 # -------------------------------------------------------------------
 resource "googledrivesuite_sheet" "revenue" {
+  credentials    = local.credentials
   spreadsheet_id = googledrivesuite_spreadsheet.example.id
   title          = "Revenue"
   index          = 1
@@ -36,6 +38,7 @@ resource "googledrivesuite_sheet" "revenue" {
 }
 
 resource "googledrivesuite_sheet" "expenses" {
+  credentials    = local.credentials
   spreadsheet_id = googledrivesuite_spreadsheet.example.id
   title          = "Expenses"
   index          = 2
@@ -47,6 +50,7 @@ resource "googledrivesuite_sheet" "expenses" {
 # 3. Share the spreadsheet with human users and service accounts
 # -------------------------------------------------------------------
 resource "googledrivesuite_permission" "editor" {
+  credentials   = local.credentials
   file_id       = googledrivesuite_spreadsheet.example.id
   role          = "writer"
   type          = "user"
@@ -56,6 +60,7 @@ resource "googledrivesuite_permission" "editor" {
 }
 
 resource "googledrivesuite_permission" "viewer" {
+  credentials   = local.credentials
   file_id       = googledrivesuite_spreadsheet.example.id
   role          = "reader"
   type          = "user"
@@ -65,6 +70,7 @@ resource "googledrivesuite_permission" "viewer" {
 }
 
 resource "googledrivesuite_permission" "service_account" {
+  credentials   = local.credentials
   file_id       = googledrivesuite_spreadsheet.example.id
   role          = "writer"
   type          = "user"
@@ -77,6 +83,7 @@ resource "googledrivesuite_permission" "service_account" {
 # 4. Back up the spreadsheet to Google Cloud Storage
 # -------------------------------------------------------------------
 resource "googledrivesuite_spreadsheet_backup" "xlsx_backup" {
+  credentials    = local.credentials
   spreadsheet_id = googledrivesuite_spreadsheet.example.id
   bucket         = "my-company-backups"
   object_path    = "spreadsheets/quarterly-report.xlsx"
@@ -84,6 +91,7 @@ resource "googledrivesuite_spreadsheet_backup" "xlsx_backup" {
 }
 
 resource "googledrivesuite_spreadsheet_backup" "pdf_backup" {
+  credentials    = local.credentials
   spreadsheet_id = googledrivesuite_spreadsheet.example.id
   bucket         = "my-company-backups"
   object_path    = "spreadsheets/quarterly-report.pdf"
