@@ -144,20 +144,31 @@ See [`examples/`](examples/) for complete working configurations.
 
 Creates and manages a Google Spreadsheet.
 
+#### Arguments
+
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `credentials` | String | No | Service account JSON credentials (sensitive). Falls back to `GOOGLE_APPLICATION_CREDENTIALS` env var. |
 | `title` | String | Yes | The title of the spreadsheet. |
 | `locale` | String | No | The locale (e.g., `en_US`). Defaults to the service account's locale. |
 | `time_zone` | String | No | The time zone (e.g., `America/New_York`). Defaults to the service account's time zone. |
-| `id` | String | Computed | The spreadsheet ID assigned by Google. |
-| `spreadsheet_url` | String | Computed | The URL to access the spreadsheet in a browser. |
+
+#### Outputs
+
+| Attribute | Type | Description |
+|---|---|---|
+| `id` | String | The spreadsheet ID assigned by Google. |
+| `spreadsheet_url` | String | The URL to access the spreadsheet in a browser. |
+| `locale` | String | The resolved locale of the spreadsheet (computed if not set). |
+| `time_zone` | String | The resolved time zone of the spreadsheet (computed if not set). |
 
 Import: `terraform import googledrivesuite_spreadsheet.example <spreadsheet_id>`
 
 ### googledrivesuite_sheet
 
 Manages an individual sheet (tab) within a Google Spreadsheet.
+
+#### Arguments
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
@@ -167,14 +178,24 @@ Manages an individual sheet (tab) within a Google Spreadsheet.
 | `index` | Int64 | No | The zero-based position of the sheet. |
 | `row_count` | Int64 | No | The number of rows. Defaults to 1000. |
 | `column_count` | Int64 | No | The number of columns. Defaults to 26. |
-| `id` | String | Computed | Composite ID (`spreadsheet_id/sheet_id`). |
-| `sheet_id` | Int64 | Computed | The numeric sheet ID assigned by Google. |
+
+#### Outputs
+
+| Attribute | Type | Description |
+|---|---|---|
+| `id` | String | Composite ID in the format `spreadsheet_id/sheet_id`. |
+| `sheet_id` | Int64 | The numeric sheet ID assigned by Google. |
+| `index` | Int64 | The resolved zero-based position of the sheet (computed if not set). |
+| `row_count` | Int64 | The resolved number of rows (computed if not set). |
+| `column_count` | Int64 | The resolved number of columns (computed if not set). |
 
 Import: `terraform import googledrivesuite_sheet.example <spreadsheet_id>/<sheet_id>`
 
 ### googledrivesuite_permission
 
 Manages a sharing permission on a Google Drive file or spreadsheet.
+
+#### Arguments
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
@@ -185,13 +206,20 @@ Manages a sharing permission on a Google Drive file or spreadsheet.
 | `email_address` | String | No | The email address. Required when type is `user` or `group`. Changing this forces re-creation. |
 | `domain` | String | No | The domain. Required when type is `domain`. Changing this forces re-creation. |
 | `send_notification` | Bool | No | Whether to send a notification email. |
-| `id` | String | Computed | The permission ID assigned by Google Drive. |
+
+#### Outputs
+
+| Attribute | Type | Description |
+|---|---|---|
+| `id` | String | The permission ID assigned by Google Drive. |
 
 Import: `terraform import googledrivesuite_permission.example <file_id>/<permission_id>`
 
 ### googledrivesuite_spreadsheet_backup
 
 Exports a Google Spreadsheet to a Google Cloud Storage bucket. The backup is created or updated on every `terraform apply`.
+
+#### Arguments
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
@@ -200,9 +228,15 @@ Exports a Google Spreadsheet to a Google Cloud Storage bucket. The backup is cre
 | `bucket` | String | Yes | The GCS bucket name. |
 | `object_path` | String | Yes | The object path within the bucket. |
 | `export_format` | String | No | Export format: `xlsx` (default), `pdf`, `csv`, `ods`, `tsv`. |
-| `id` | String | Computed | Composite ID (`bucket/object_path`). |
-| `gcs_object_url` | String | Computed | The full GCS URL (`gs://bucket/path`). |
-| `last_backup` | String | Computed | RFC 3339 timestamp of the last successful backup. |
+
+#### Outputs
+
+| Attribute | Type | Description |
+|---|---|---|
+| `id` | String | Composite ID in the format `bucket/object_path`. |
+| `export_format` | String | The resolved export format (defaults to `xlsx` if not set). |
+| `gcs_object_url` | String | The full GCS URL (`gs://bucket/path`). |
+| `last_backup` | String | RFC 3339 timestamp of the last successful backup. |
 
 ## Developing
 
