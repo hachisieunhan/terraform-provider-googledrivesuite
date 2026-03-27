@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release:
-    name: Determine version and tag
+    name: Determine version and release
     runs-on: ubuntu-latest
     # Skip if the commit was created by this workflow (avoid infinite loops).
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
@@ -108,3 +108,27 @@ jobs:
           git push origin "$version"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        if: steps.next_version.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Import GPG key
+        if: steps.next_version.outputs.skip != 'true'
+        uses: crazy-max/ghaction-import-gpg@v6
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+
+      - name: Run GoReleaser
+        if: steps.next_version.outputs.skip != 'true'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          GORELEASER_CURRENT_TAG: ${{ steps.next_version.outputs.version }}
