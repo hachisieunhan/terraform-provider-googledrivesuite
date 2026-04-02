@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	cloud.google.com/go/storage v1.61.3
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
+	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.273.0
 )
 
@@ -60,7 +61,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.42.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
