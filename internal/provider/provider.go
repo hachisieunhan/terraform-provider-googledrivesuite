@@ -14,7 +14,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -91,30 +90,25 @@ func resolveCredentials(credentials types.String) (string, error) {
 
 // newClients initializes Google API clients from the given credentials JSON string.
 func newClients(ctx context.Context, credentialsJSON string) (*GoogleDriveSuiteClients, error) {
-	creds, err := google.CredentialsFromJSON(ctx, []byte(credentialsJSON),
+	credOption := option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON))
+	scopes := option.WithScopes(
 		sheets.SpreadsheetsScope,
 		drive.DriveScope,
 		drive.DriveFileScope,
 		storage.ScopeFullControl,
-		"https://www.googleapis.com/auth/cloud-platform",
 	)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse credentials: %w", err)
-	}
 
-	credOption := option.WithCredentials(creds)
-
-	sheetsService, err := sheets.NewService(ctx, credOption)
+	sheetsService, err := sheets.NewService(ctx, credOption, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Sheets client: %w", err)
 	}
 
-	driveService, err := drive.NewService(ctx, credOption)
+	driveService, err := drive.NewService(ctx, credOption, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Drive client: %w", err)
 	}
 
-	storageClient, err := storage.NewClient(ctx, credOption)
+	storageClient, err := storage.NewClient(ctx, credOption, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Cloud Storage client: %w", err)
 	}
