@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -148,9 +149,14 @@ func (r *SheetResource) Create(ctx context.Context, req resource.CreateRequest, 
 		},
 	}
 
-	result, err := clients.SheetsService.Spreadsheets.BatchUpdate(data.SpreadsheetID.ValueString(), &sheets.BatchUpdateSpreadsheetRequest{
-		Requests: []*sheets.Request{addSheetRequest},
-	}).Context(ctx).Do()
+	var result *sheets.BatchUpdateSpreadsheetResponse
+	err = retryOn403(ctx, 2*time.Minute, func() error {
+		var createErr error
+		result, createErr = clients.SheetsService.Spreadsheets.BatchUpdate(data.SpreadsheetID.ValueString(), &sheets.BatchUpdateSpreadsheetRequest{
+			Requests: []*sheets.Request{addSheetRequest},
+		}).Context(ctx).Do()
+		return createErr
+	})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Sheet",

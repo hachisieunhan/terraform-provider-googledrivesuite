@@ -2,11 +2,12 @@ package provider
 
 import (
 	"context"
-	"fmt"
-	"os"
-
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -14,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -90,25 +92,38 @@ func resolveCredentials(credentials types.String) (string, error) {
 
 // newClients initializes Google API clients from the given credentials JSON string.
 func newClients(ctx context.Context, credentialsJSON string) (*GoogleDriveSuiteClients, error) {
-	credOption := option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON))
-	scopes := option.WithScopes(
-		sheets.SpreadsheetsScope,
-		drive.DriveScope,
-		drive.DriveFileScope,
-		storage.ScopeFullControl,
-	)
+	opts := []option.ClientOption{
+		option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON)),
+		option.WithScopes(
+			sheets.SpreadsheetsScope,
+			drive.DriveScope,
+			drive.DriveFileScope,
+			storage.ScopeFullControl,
+		),
+	}
 
-	sheetsService, err := sheets.NewService(ctx, credOption, scopes)
+	// Extract the project_id from the service account JSON and set it as the
+	// quota project. This ensures API calls are correctly attributed even when
+	// the service account belongs to a different project than the one where
+	// the APIs are enabled.
+	var sa struct {
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.Unmarshal([]byte(credentialsJSON), &sa); err == nil && sa.ProjectID != "" {
+		opts = append(opts, option.WithQuotaProject(sa.ProjectID))
+	}
+
+	sheetsService, err := sheets.NewService(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Sheets client: %w", err)
 	}
 
-	driveService, err := drive.NewService(ctx, credOption, scopes)
+	driveService, err := drive.NewService(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Drive client: %w", err)
 	}
 
-	storageClient, err := storage.NewClient(ctx, credOption, scopes)
+	storageClient, err := storage.NewClient(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Cloud Storage client: %w", err)
 	}
@@ -128,4 +143,62 @@ func isNotFound(err error) bool {
 		return apiErr.Code == http.StatusNotFound
 	}
 	return false
+}
+
+// isForbidden returns true if the error represents an HTTP 403 Forbidden
+// response from a Google API call.
+func isForbidden(err error) bool {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == http.StatusForbidden
+	}
+	return false
+}
+
+// retryOn403 retries the given function with exponential backoff when a 403
+// Forbidden error is returned. This handles the common race condition where
+// a Google Cloud API (e.g. Sheets, Drive) has just been enabled via
+// google_project_service but the permission has not yet propagated.
+func retryOn403(ctx context.Context, timeout time.Duration, fn func() error) error {
+	const (
+		initialBackoff = 5 * time.Second
+		maxBackoff     = 30 * time.Second
+		multiplier     = 2.0
+	)
+
+	deadline := time.Now().Add(timeout)
+	backoff := initialBackoff
+
+	for {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+
+		if !isForbidden(err) {
+			return err
+		}
+
+		if time.Now().Add(backoff).After(deadline) {
+			return fmt.Errorf("%w (retried until timeout %s)", err, timeout)
+		}
+
+		tflog.Warn(ctx, "received 403 Forbidden, retrying after backoff",
+			map[string]interface{}{
+				"backoff": backoff.String(),
+				"error":   err.Error(),
+			},
+		)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+
+		backoff = time.Duration(float64(backoff) * multiplier)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
 }

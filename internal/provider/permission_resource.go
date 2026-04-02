@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -136,7 +137,12 @@ func (r *PermissionResource) Create(ctx context.Context, req resource.CreateRequ
 		createCall.SendNotificationEmail(data.SendNotification.ValueBool())
 	}
 
-	result, err := createCall.Context(ctx).Do()
+	var result *drive.Permission
+	err = retryOn403(ctx, 2*time.Minute, func() error {
+		var createErr error
+		result, createErr = createCall.Context(ctx).Do()
+		return createErr
+	})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Permission",
