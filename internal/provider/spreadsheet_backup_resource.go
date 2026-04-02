@@ -137,9 +137,11 @@ func (r *SpreadsheetBackupResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	// Perform the export and upload.
+	// Perform the export and upload with retry for API propagation delays.
 	objectPath := data.ObjectPath.ValueString()
-	err = exportAndUpload(ctx, clients, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
+	err = retryOn403(ctx, 2*time.Minute, func() error {
+		return exportAndUpload(ctx, clients, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
+	})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Backup",
@@ -233,7 +235,9 @@ func (r *SpreadsheetBackupResource) Update(ctx context.Context, req resource.Upd
 	}
 
 	objectPath := data.ObjectPath.ValueString()
-	err = exportAndUpload(ctx, clients, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
+	err = retryOn403(ctx, 2*time.Minute, func() error {
+		return exportAndUpload(ctx, clients, data.SpreadsheetID.ValueString(), data.Bucket.ValueString(), objectPath, formatInfo.mimeType)
+	})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Backup",

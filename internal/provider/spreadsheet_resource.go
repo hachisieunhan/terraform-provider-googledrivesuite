@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -112,7 +113,12 @@ func (r *SpreadsheetResource) Create(ctx context.Context, req resource.CreateReq
 		Properties: properties,
 	}
 
-	result, err := clients.SheetsService.Spreadsheets.Create(spreadsheet).Context(ctx).Do()
+	var result *sheets.Spreadsheet
+	err = retryOn403(ctx, 2*time.Minute, func() error {
+		var createErr error
+		result, createErr = clients.SheetsService.Spreadsheets.Create(spreadsheet).Context(ctx).Do()
+		return createErr
+	})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Spreadsheet",
