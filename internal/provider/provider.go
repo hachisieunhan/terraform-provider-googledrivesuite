@@ -91,18 +91,23 @@ func resolveCredentials(credentials types.String) (string, error) {
 // newClients initializes Google API clients from the given credentials JSON string.
 func newClients(ctx context.Context, credentialsJSON string) (*GoogleDriveSuiteClients, error) {
 	credOption := option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON))
+	scopes := option.WithScopes(
+		sheets.SpreadsheetsScope,
+		drive.DriveScope,
+		storage.ScopeFullControl,
+	)
 
-	sheetsService, err := sheets.NewService(ctx, credOption)
+	sheetsService, err := sheets.NewService(ctx, credOption, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Sheets client: %w", err)
 	}
 
-	driveService, err := drive.NewService(ctx, credOption)
+	driveService, err := drive.NewService(ctx, credOption, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Drive client: %w", err)
 	}
 
-	storageClient, err := storage.NewClient(ctx, credOption)
+	storageClient, err := storage.NewClient(ctx, credOption, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Google Cloud Storage client: %w", err)
 	}
